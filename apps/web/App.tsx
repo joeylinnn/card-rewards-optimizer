@@ -70,9 +70,9 @@ export default function App() {
     return()=>lifecycle.abort();
   },[best,calculation.error]);
   return <>
-    <header><div className="brand"><span className="brand-mark">cw</span>cardwise<span className="badge">EARLY ACCESS</span></div><span className="header-note">Your cards. A better plan.</span></header>
+    <header><div className="brand"><span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><rect x="7" y="8" width="24" height="17" rx="4" transform="rotate(-12 7 8)" fill="#83ad94"/><rect x="7" y="14" width="27" height="19" rx="4" fill="#d6efb5"/><path d="M8 20h25" stroke="#143d34" strokeWidth="3"/><path d="m21 27 3 3 6-6" stroke="#143d34" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg></span><span className="brand-name">Card<span>Wise</span></span><span className="badge">EARLY ACCESS</span></div><span className="header-note">Your cards. A better plan.</span></header>
     <main>
-      <section className="intro"><div><p className="eyebrow">OPTIMIZE MY CARDS</p><h1>Make every category count.</h1><p>Turn your monthly spending into a clear plan for the cards you already own.</p></div><div className="privacy">Calculated in your browser<br/><span>No bank connection needed</span></div></section>
+      <section className="intro"><div><p className="eyebrow">OPTIMIZE MY CARDS</p><h1>Make every category count.</h1><p>Turn your monthly spending into a clear plan for the cards you already own.</p></div><div className="intro-actions"><div className="privacy">Calculated in your browser<br/><span>No bank connection needed</span></div><button className="load-saved-top" onClick={load}>Load saved</button><p className="top-notice" role="status">{notice}</p></div></section>
       <div className="workspace">
         <div className="setup">
           <section className="panel"><div className="section-title"><h2><span>01</span> Your spending</h2><button className="text-button" onClick={()=>{setSpending({...blank});setRent(0);}}>Clear amounts</button></div><p className="muted">Use one billing cycle as your forecast. Rent is separate from everyday spending.</p>
@@ -99,7 +99,7 @@ export default function App() {
           <details className="methodology"><summary>How this plan is calculated</summary><p>We compare category earning rates and the Bilt housing thresholds, including spending splits that unlock a better rent tier. We value each points currency independently, using your chosen cents per point.</p><p>Existing-card annual fees are fixed costs and do not change where to spend. Welcome bonuses, annual benefits, interest, payment fees, issuer portals and anniversary bonuses are excluded. Accelerators are included only when enabled in your wallet. This is a monthly eligible-spending forecast, not an annual projection. Custom cards must use uncapped rates.</p><p>Groceries and online groceries are separate: do not count an order twice. Merchant coding and reward rounding may change actual earnings. Rent assumes an eligible payment through Bilt.</p><p>Nothing is sent to a server. Your inputs stay in memory unless you choose to save them on this device.</p></details>
         </div>
       </div>
-      <footer><span>cardwise · Make more of what you already have.</span><span>US cards · USD · Rules checked October 4, 2026</span></footer>
+      <footer><span>CardWise · Make more of what you already have.</span><span>US cards · USD · Rules checked October 4, 2026</span></footer>
     </main>
   </>;
 }
