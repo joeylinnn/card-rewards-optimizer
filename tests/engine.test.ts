@@ -36,7 +36,7 @@ describe('Bilt and whole-wallet optimizer',()=>{
     expect(p.housingPoints).toBe(1875);
   });
   it('routes non-Bilt categories by value without inventing rent rewards',()=>{
-    const p=optimize(input({cards:catalog.slice(1,4),spending:{...spend(1000),grocery:600,dining:800}})).best!;
+    const p=optimize(input({cards:catalog.filter(c=>['sapphire-preferred','savor','active-cash'].includes(c.id)),spending:{...spend(1000),grocery:600,dining:800}})).best!;
     expect(p.rows.find(r=>r.category==='grocery')?.card.id).toBe('savor');
     expect(p.rows.find(r=>r.category==='dining')?.card.id).toBe('sapphire-preferred');
     expect(p.rows.find(r=>r.category==='other')?.card.id).toBe('active-cash');
@@ -52,7 +52,7 @@ describe('Bilt and whole-wallet optimizer',()=>{
     expect(optimize(input({rent:0})).best?.housingPoints).toBe(0);
   });
   it('checks just below a threshold when very small rent makes the floor better',()=>{
-    const p=optimize(input({rent:10,spending:spend(10),cards:[bilt,catalog[3]],cashValue:0})).best!;
+    const p=optimize(input({rent:10,spending:spend(10),cards:[bilt,catalog.find(c=>c.id==='active-cash')!],cashValue:0})).best!;
     expect(p.mode).toBe('housing');expect(p.biltSpend).toBe(2.49);expect(p.housingPoints).toBe(250);
   });
   it('conserves allocated spending across many scenarios',()=>{
