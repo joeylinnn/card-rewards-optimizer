@@ -20,6 +20,7 @@ pnpm build
 - Custom uncapped cards with editable base/category rates.
 - Estimated-value or single-program points optimization.
 - Cross-card category splits and Bilt housing-tier comparisons.
+- Optional existing or new Bilt point accelerator, with remaining capacity and activation cost.
 - Recurring forecasts or existing-balance rent calculations.
 - Optional save/load/delete on this device. No accounts, analytics, bank connections or server submission. Fonts are requested from Google Fonts; spending data is not transmitted.
 

@@ -1,8 +1,8 @@
 import { categories, rate, type Card, type Category, type Spending } from '../card-catalog';
 export type Mode = 'none' | 'housing' | 'flexible';
-export interface Input { spending: Spending; rent: number; cards: Card[]; objective: 'value' | 'points'; targetCurrency: string; cashValue: number; cashTiming: 'recurring' | 'available'; availableCash: number; }
+export interface Input { spending: Spending; rent: number; cards: Card[]; objective: 'value' | 'points'; targetCurrency: string; cashValue: number; cashTiming: 'recurring' | 'available'; availableCash: number; accelerator?: 'off' | 'active' | 'activate'; acceleratorRemaining?: number; activationsUsed?: number; }
 export interface Allocation { category: Category; card: Card; amount: number; rate: number; rewards: number; value: number; }
-export interface Plan { mode: Mode; rows: Allocation[]; housingPoints: number; housingRate: number; biltSpend: number; cashEarned: number; cashUsed: number; cashLeft: number; value: number; score: number; points: Record<string,number>; cashBack: number; }
+export interface Plan { mode: Mode; rows: Allocation[]; housingPoints: number; housingRate: number; biltSpend: number; cashEarned: number; cashUsed: number; cashLeft: number; value: number; score: number; points: Record<string,number>; cashBack: number; accelerated: boolean; acceleratorBonusPoints: number; acceleratorCashUsed: number; acceleratorRemaining: number; }
 const cents = (n: number) => Math.round(n * 100);
 const dollars = (n: number) => n / 100;
 export function housingMultiplier(spend: number, rent: number) {
@@ -15,6 +15,9 @@ function validate(input: Input) {
     if (!Number.isFinite(n) || n < 0 || n > 1000000) throw new Error('Amounts must be between $0 and $1,000,000.');
   }
   if (!Number.isFinite(input.cashValue) || input.cashValue < 0 || input.cashValue > 1) throw new Error('Bilt Cash value must be between 0 and 100%.');
+  if (input.accelerator !== undefined && !['off','active','activate'].includes(input.accelerator)) throw new Error('Invalid accelerator setting.');
+  if (input.accelerator==='active' && input.acceleratorRemaining !== undefined && (!Number.isFinite(input.acceleratorRemaining) || input.acceleratorRemaining < 0 || input.acceleratorRemaining > 5000)) throw new Error('Accelerator spending allowance must be between $0 and $5,000.');
+  if (input.accelerator==='activate' && input.activationsUsed !== undefined && (!Number.isInteger(input.activationsUsed) || input.activationsUsed < 0 || input.activationsUsed > 5)) throw new Error('Activations used must be a whole number from 0 to 5.');
   if (input.cards.filter(c=>c.bilt).length > 1) throw new Error('Select one Bilt card.');
   if (new Set(input.cards.map(c=>c.id)).size !== input.cards.length) throw new Error('Duplicate card identifiers.');
   for (const card of input.cards) {
@@ -25,12 +28,26 @@ function validate(input: Input) {
 function unitScore(card: Card, category: Category, input: Input) {
   return rate(card,category) * (input.objective === 'value' ? card.cents/100 : card.kind === 'points' && card.currency === input.targetCurrency ? 1 : 0);
 }
-function evaluate(input: Input, rows: Allocation[], mode: Mode): Plan {
+function evaluate(input: Input, originalRows: Allocation[], mode: Mode, accelerated=false): Plan {
   const bilt = input.cards.find(c=>c.bilt);
+  const acceleratorCashUsed = accelerated && input.accelerator==='activate' ? 200 : 0;
+  const allowance = accelerated ? (input.accelerator==='active' ? input.acceleratorRemaining??5000 : 5000) : 0;
+  let remaining = cents(allowance);
+  const rows = originalRows.flatMap(row=>{
+    if (!accelerated || !row.card.bilt || remaining<=0) return [row];
+    const boosted = Math.min(cents(row.amount),remaining);
+    remaining-=boosted;
+    const amount=dollars(boosted);
+    const result:Allocation[]=[{...row,amount,rate:row.rate+1,rewards:amount*(row.rate+1),value:amount*(row.rate+1)*row.card.cents/100}];
+    const rest=dollars(cents(row.amount)-boosted);
+    if (rest>0) result.push({...row,amount:rest,rewards:rest*row.rate,value:rest*row.rate*row.card.cents/100});
+    return result;
+  });
+  const acceleratorBonusPoints = allowance-dollars(remaining);
   const biltSpend = rows.filter(r=>r.card.bilt).reduce((n,r)=>n+r.amount,0);
   const cashEarned = mode === 'flexible' ? Math.floor(cents(biltSpend)*.04+1e-7)/100 : 0;
   let housingPoints=0, housingRate=0, cashUsed=0;
-  const budget = mode === 'flexible' ? (input.cashTiming==='recurring' ? cashEarned : input.availableCash) : 0;
+  const budget = mode === 'flexible' ? (input.cashTiming==='recurring' ? cashEarned : input.availableCash-acceleratorCashUsed) : 0;
   if (bilt && input.rent > 0 && mode === 'housing') {
     housingRate = housingMultiplier(biltSpend,input.rent);
     housingPoints = housingRate > 0 ? Math.floor(input.rent*housingRate) : 250;
@@ -41,7 +58,7 @@ function evaluate(input: Input, rows: Allocation[], mode: Mode): Plan {
     cashUsed = housingPoints*.03;
     housingRate = input.rent > 0 ? housingPoints/input.rent : 0;
   }
-  const cashLeft = mode==='flexible' ? Math.max(0, (input.cashTiming==='recurring' ? cashEarned : input.availableCash+cashEarned)-cashUsed) : input.availableCash;
+  const cashLeft = mode==='flexible' ? Math.max(0, (input.cashTiming==='recurring' ? cashEarned+(acceleratorCashUsed ? input.availableCash-acceleratorCashUsed : 0) : input.availableCash+cashEarned-acceleratorCashUsed)-cashUsed) : input.availableCash;
   const points: Record<string,number> = {};
   let cashBack=0;
   for (const row of rows) {
@@ -50,9 +67,9 @@ function evaluate(input: Input, rows: Allocation[], mode: Mode): Plan {
   }
   if (bilt) points[bilt.currency]=(points[bilt.currency]??0)+housingPoints;
   // Value measures new earnings plus rent redemption value less cash consumed; existing balances are not new earnings.
-  const value=rows.reduce((n,r)=>n+r.value,0)+housingPoints*(bilt?.cents??0)/100+(cashEarned-cashUsed)*input.cashValue;
+  const value=rows.reduce((n,r)=>n+r.value,0)+housingPoints*(bilt?.cents??0)/100+(cashEarned-cashUsed-acceleratorCashUsed)*input.cashValue;
   const score=input.objective==='value' ? value : points[input.targetCurrency]??0;
-  return {mode,rows,housingPoints,housingRate,biltSpend,cashEarned,cashUsed,cashLeft,value,score,points,cashBack};
+  return {mode,rows,housingPoints,housingRate,biltSpend,cashEarned,cashUsed,cashLeft,value,score,points,cashBack,accelerated,acceleratorBonusPoints,acceleratorCashUsed,acceleratorRemaining:dollars(remaining)};
 }
 export function optimize(input: Input): {best: Plan | null; alternatives: Plan[]} {
   validate(input);
@@ -70,13 +87,17 @@ export function optimize(input: Input): {best: Plan | null; alternatives: Plan[]
   }
   const total=categories.reduce((n,c)=>n+cents(input.spending[c.id]),0);
   const alternatives:Plan[]=[];
-  for (const mode of ['housing','flexible'] as const) {
+  const variants: {mode: 'housing'|'flexible'; accelerated: boolean}[]=[{mode:'housing',accelerated:false}];
+  variants.push({mode:'flexible',accelerated:input.accelerator==='active'});
+  if (input.accelerator==='activate' && input.availableCash>=200 && (input.activationsUsed??0)<5) variants.push({mode:'flexible',accelerated:true});
+  for (const {mode,accelerated} of variants) {
     // With fixed Bilt spend, minimize lost ordinary-card rewards. Each segment is linear.
     const segments=categories.map(c=>{
       const other=[...ordinary].sort((a,b)=>unitScore(b,c.id,input)-unitScore(a,c.id,input)||rate(b,c.id)*b.cents-rate(a,c.id)*a.cents)[0];
       return {category:c.id,amount:cents(input.spending[c.id]),other,loss:other ? unitScore(other,c.id,input)-unitScore(bilt,c.id,input) : -Infinity,valueLoss:other ? rate(other,c.id)*other.cents-rate(bilt,c.id)*bilt.cents : -Infinity};
     }).sort((a,b)=>a.loss-b.loss||a.valueLoss-b.valueLoss);
     const targets=new Set<number>([0,total]);
+    if (accelerated) targets.add(cents(input.accelerator==='active' ? input.acceleratorRemaining??5000 : 5000));
     let cumulative=0;
     for (const s of segments) {cumulative+=s.amount;targets.add(cumulative);}
     if (mode==='housing') for (const ratio of [.25,.5,.75,1]) {
@@ -103,7 +124,7 @@ export function optimize(input: Input): {best: Plan | null; alternatives: Plan[]
         if (assigned) rows.push(makeRow(s.category,bilt,dollars(assigned)));
         if (s.amount>assigned && s.other) rows.push(makeRow(s.category,s.other,dollars(s.amount-assigned)));
       }
-      const plan=evaluate(input,rows,mode);
+      const plan=evaluate(input,rows,mode,accelerated);
       if (!best || plan.score>best.score+1e-8 || Math.abs(plan.score-best.score)<1e-8 && plan.value>best.value+1e-8) best=plan;
     }
     if (best) alternatives.push(best);
