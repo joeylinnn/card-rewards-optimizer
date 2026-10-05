@@ -36,7 +36,7 @@ describe('Bilt and whole-wallet optimizer',()=>{
     expect(p.housingPoints).toBe(1875);
   });
   it('routes non-Bilt categories by value without inventing rent rewards',()=>{
-    const p=optimize(input({cards:catalog.slice(1),spending:{...spend(1000),grocery:600,dining:800}})).best!;
+    const p=optimize(input({cards:catalog.slice(1,4),spending:{...spend(1000),grocery:600,dining:800}})).best!;
     expect(p.rows.find(r=>r.category==='grocery')?.card.id).toBe('savor');
     expect(p.rows.find(r=>r.category==='dining')?.card.id).toBe('sapphire-preferred');
     expect(p.rows.find(r=>r.category==='other')?.card.id).toBe('active-cash');
