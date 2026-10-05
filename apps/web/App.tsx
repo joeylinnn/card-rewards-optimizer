@@ -1,0 +1,95 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { catalog, categories, type Card, type Category, type Spending } from '../../packages/card-catalog';
+import { optimize, type Input, type Plan } from '../../packages/rewards-engine';
+import './styles.css';
+
+const money=(n:number)=>n.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2});
+const number=(n:number)=>n.toLocaleString('en-US',{maximumFractionDigits:0});
+const sample:Spending={grocery:600,onlineGrocery:0,dining:800,travel:300,gas:200,streaming:100,entertainment:200,other:1800};
+const blank=Object.fromEntries(categories.map(c=>[c.id,0])) as Spending;
+const modeName=(p:Plan)=>p.mode==='housing'?'Housing-only':p.mode==='flexible'?'Flexible Bilt Cash':'Category allocation';
+function Amount({label,value,onChange,hint,max=1000000,suffix='$'}:{label:string;value:number;onChange:(n:number)=>void;hint?:string;max?:number;suffix?:string}) {
+  return <label className="amount"><span>{label}</span><div className="input-wrap"><span aria-hidden="true">{suffix}</span><input aria-label={label} type="number" min="0" max={max} step="0.01" value={Number.isFinite(value)?value:''} onChange={e=>onChange(e.target.valueAsNumber)} /></div>{hint&&<small>{hint}</small>}</label>;
+}
+export default function App() {
+  const [spending,setSpending]=useState<Spending>(sample);
+  const [rent,setRent]=useState(3000);
+  const [cards,setCards]=useState<Card[]>(catalog);
+  const [selected,setSelected]=useState<string[]>(['bilt-palladium','savor','sapphire-preferred']);
+  const [objective,setObjective]=useState<Input['objective']>('value');
+  const [target,setTarget]=useState('Bilt Points');
+  const [cashValue,setCashValue]=useState(.25);
+  const [cashTiming,setCashTiming]=useState<Input['cashTiming']>('recurring');
+  const [availableCash,setAvailableCash]=useState(0);
+  const [notice,setNotice]=useState('');
+  const [showCustom,setShowCustom]=useState(false);
+  const [customName,setCustomName]=useState('My card');
+  const [customKind,setCustomKind]=useState<'points'|'cash'>('points');
+  const [customCurrency,setCustomCurrency]=useState('My points');
+  const [customBase,setCustomBase]=useState(1);
+  const [customCents,setCustomCents]=useState(1);
+  const [customRates,setCustomRates]=useState<Spending>({...blank});
+  const owned=cards.filter(c=>selected.includes(c.id));
+  const currencies=[...new Set(owned.filter(c=>c.kind==='points').map(c=>c.currency))];
+  const hasBilt=owned.some(c=>c.bilt);
+  useEffect(()=>{if(currencies.length&&!currencies.includes(target))setTarget(currencies[0]);if(!currencies.length)setObjective('value');},[currencies.join('|'),target]);
+  const input:Input={spending,rent,cards:owned,objective,targetCurrency:target,cashValue,cashTiming,availableCash};
+  const calculation=useMemo(()=>{try{return {...optimize(input),error:''};}catch(e){return {best:null,alternatives:[],error:(e as Error).message};}},[spending,rent,cards,selected,objective,target,cashValue,cashTiming,availableCash]);
+  const best=calculation.best;
+  const total=categories.reduce((n,c)=>n+(Number.isFinite(spending[c.id])?spending[c.id]:0),0);
+  const toggle=(id:string)=>setSelected(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+  function addCustom(e:React.FormEvent) {
+    e.preventDefault();
+    const id=`custom-${Date.now()}`;
+    const card:Card={id,name:customName.trim(),issuer:'Custom card',currency:customKind==='cash'?'Cash back':customCurrency.trim(),kind:customKind,base:customBase,cents:customKind==='cash'?1:customCents,rates:Object.fromEntries(Object.entries(customRates).filter(([,n])=>n>0)),note:'Your own uncapped earning rates. Enter eligible category spending only. Caps and promotions are not supported.'};
+    if(!card.name||!card.currency||[customBase,customCents,...Object.values(customRates)].some(n=>!Number.isFinite(n)||n<0||n>20)){setNotice('Enter a name, currency and rates from 0 to 20.');return;}
+    setCards(prev=>[...prev,card]);setSelected(prev=>[...prev,id]);setShowCustom(false);setNotice(`${card.name} added to your wallet.`);
+  }
+  function save() {try{localStorage.setItem('cardwise-scenario',JSON.stringify({version:1,spending,rent,cards,selected,objective,target,cashValue,cashTiming,availableCash}));setNotice('Scenario saved on this device.');}catch{setNotice('This browser could not save your scenario.');}}
+  function load() {try{
+    const raw=localStorage.getItem('cardwise-scenario');if(!raw){setNotice('No saved scenario on this device.');return;}
+    const s=JSON.parse(raw);
+    if(s.version!==1||!Array.isArray(s.cards)||!Array.isArray(s.selected)||!['value','points'].includes(s.objective)||!['recurring','available'].includes(s.cashTiming)||typeof s.target!=='string'||s.cards.some((c:Card)=>typeof c.id!=='string'||typeof c.name!=='string'||typeof c.currency!=='string'||!['points','cash'].includes(c.kind)||!c.rates)||s.selected.some((id:unknown)=>typeof id!=='string'||!s.cards.some((c:Card)=>c.id===id)))throw Error();
+    optimize({spending:s.spending,rent:s.rent,cards:s.cards,objective:s.objective,targetCurrency:s.target,cashValue:s.cashValue,cashTiming:s.cashTiming,availableCash:s.availableCash});
+    setSpending(s.spending);setRent(s.rent);setCards(s.cards);setSelected(s.selected);setObjective(s.objective);setTarget(s.target);setCashValue(s.cashValue);setCashTiming(s.cashTiming);setAvailableCash(s.availableCash);setNotice('Saved scenario loaded.');
+  }catch{setNotice('Saved scenario is invalid. Your current inputs were kept.');}}
+  useEffect(()=>{
+    const context=(document as unknown as {modelContext?:{registerTool:(tool:unknown,options:{signal:AbortSignal})=>Promise<void>}}).modelContext;
+    if(!context)return;
+    const lifecycle=new AbortController();
+    const tool={name:'read_rewards_plan',description:'Read the currently visible card allocation and forecast. No data is saved or changed.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true},execute:(args:unknown)=>{if(!args||typeof args!=='object'||Object.keys(args).length)throw Error('Expected an empty object.');return best?{strategy:modeName(best),estimatedValue:best.value,points:best.points,cashBack:best.cashBack,allocations:best.rows.map(r=>({category:r.category,card:r.card.name,spend:r.amount,rate:r.rate})),biltCashLeft:best.cashLeft}:{error:calculation.error||'Select at least one card.'};}};
+    try{void Promise.resolve(context.registerTool(tool,{signal:lifecycle.signal})).catch(()=>{});}catch{}
+    return()=>lifecycle.abort();
+  },[best,calculation.error]);
+  return <>
+    <header><div className="brand"><span className="brand-mark">cw</span>cardwise<span className="badge">EARLY ACCESS</span></div><span className="header-note">Your cards. A better plan.</span></header>
+    <main>
+      <section className="intro"><div><p className="eyebrow">OPTIMIZE MY CARDS</p><h1>Make every category count.</h1><p>Turn your monthly spending into a clear plan for the cards you already own.</p></div><div className="privacy">Calculated in your browser<br/><span>No bank connection needed</span></div></section>
+      <div className="workspace">
+        <div className="setup">
+          <section className="panel"><div className="section-title"><h2><span>01</span> Your spending</h2><button className="text-button" onClick={()=>{setSpending({...blank});setRent(0);}}>Clear amounts</button></div><p className="muted">Use one billing cycle as your forecast. Rent is separate from everyday spending.</p>
+            <div className="rent-input"><Amount label="Monthly rent" value={rent} onChange={setRent}/><p>Housing rewards are modeled only through Bilt.</p></div>
+            <div className="spending-grid">{categories.map(c=><Amount key={c.id} label={c.label} hint={c.hint} value={spending[c.id]} onChange={n=>setSpending(prev=>({...prev,[c.id]:n}))}/>)}</div>
+            <div className="total-line"><span>Everyday spending</span><strong>{money(total)}</strong></div>
+          </section>
+          <section className="panel"><div className="section-title"><h2><span>02</span> Your wallet</h2><button className="text-button" onClick={()=>setShowCustom(!showCustom)}>{showCustom?'Close form':'+ Custom card'}</button></div><p className="muted">Select only cards you own. Point values are editable estimates.</p>
+            <div className="wallet">{cards.map(c=><div className={`wallet-card ${selected.includes(c.id)?'selected':''}`} key={c.id}><label className="card-select"><input type="checkbox" checked={selected.includes(c.id)} onChange={()=>toggle(c.id)}/><span><strong>{c.name}</strong><small>{c.issuer} · {c.base}{c.kind==='cash'?'%':'×'} base rate</small></span></label><div className="card-meta">{c.kind==='points'&&<Amount label={`${c.name} value (¢/point)`} value={c.cents} suffix="¢" max={20} onChange={n=>setCards(prev=>prev.map(x=>x.id===c.id?{...x,cents:n}:x))}/>}<p>{c.note}</p>{c.source&&<a href={c.source} target="_blank" rel="noreferrer">Issuer rules · checked {c.verified}</a>}</div></div>)}</div>
+            {showCustom&&<form className="custom-form" onSubmit={addCustom}><h3>Add your own earning rates</h3><label>Card name<input required maxLength={80} value={customName} onChange={e=>setCustomName(e.target.value)}/></label><label>Reward type<select value={customKind} onChange={e=>setCustomKind(e.target.value as 'points'|'cash')}><option value="points">Points or miles</option><option value="cash">Cash back</option></select></label>{customKind==='points'&&<><label>Rewards currency<input required maxLength={80} value={customCurrency} onChange={e=>setCustomCurrency(e.target.value)}/></label><Amount label="Custom point value (¢)" max={20} suffix="¢" value={customCents} onChange={setCustomCents}/></>}<Amount label={customKind==='cash'?'Base cash back (%)':'Base earning rate (×)'} max={20} suffix={customKind==='cash'?'%':'×'} value={customBase} onChange={setCustomBase}/><p className="muted">Category override: 0 uses the base rate. Uncapped rules only.</p><div className="spending-grid">{categories.map(c=><Amount key={c.id} label={`${c.label} ${customKind==='cash'?'%':'×'}`} suffix={customKind==='cash'?'%':'×'} max={20} value={customRates[c.id]} onChange={n=>setCustomRates(p=>({...p,[c.id]:n}))}/>)}</div><button className="primary" type="submit">Add to wallet</button></form>}
+          </section>
+          <section className="panel"><h2><span>03</span> Your preferences</h2><div className="preferences"><label>Optimize for<select aria-label="Optimize for" value={objective} onChange={e=>setObjective(e.target.value as Input['objective'])}><option value="value">Estimated rewards value</option><option value="points" disabled={!currencies.length}>Points in one program</option></select></label>{objective==='points'&&<label>Rewards program<select value={target} onChange={e=>setTarget(e.target.value)}>{currencies.map(c=><option key={c}>{c}</option>)}</select></label>}
+            {hasBilt&&<><label>Bilt Cash usable value<select aria-label="Bilt Cash usable value" value={cashValue} onChange={e=>setCashValue(Number(e.target.value))}><option value={0}>0% · I won't use credits</option><option value={.25}>25% · Limited use</option><option value={.5}>50% · Some useful credits</option><option value={1}>100% · Fully usable credits</option></select></label><label>Rent unlock funding<select aria-label="Rent unlock funding" value={cashTiming} onChange={e=>setCashTiming(e.target.value as Input['cashTiming'])}><option value="recurring">Recurring month · prior spend funds rent</option><option value="available">Next payment · existing Bilt Cash only</option></select></label>{cashTiming==='available'&&<Amount label="Available Bilt Cash" value={availableCash} onChange={setAvailableCash}/>}</>}
+          </div><p className="muted">Point values reflect your redemptions. Restricted Bilt Cash is valued separately.</p><div className="scenario-actions"><button onClick={save} disabled={!!calculation.error}>Save on this device</button><button onClick={load}>Load saved</button><button onClick={()=>{try{localStorage.removeItem('cardwise-scenario');setNotice('Saved data cleared from this device.');}catch{setNotice('Could not clear saved data.');}}}>Delete saved</button></div><p className="notice" role="status">{notice}</p></section>
+        </div>
+        <div className="results"><section className="result-hero"><p className="eyebrow">YOUR MONTHLY PLAN</p>{best?<><div className="value">{money(best.value)}</div><p>estimated rewards value</p><div className="result-divider"/><div className="strategy"><span>Recommended strategy</span><strong>{modeName(best)}</strong></div><p className="hero-note">{objective==='points'?`Optimized for ${target}. Other rewards are tracked separately.`:'Balances rewards earned against the value of restricted cash you use.'}</p></>:<><h2>{calculation.error?'Check your inputs':'Build your wallet'}</h2><p role="alert">{calculation.error||'Select at least one card to see your plan.'}</p></>}</section>
+          {best&&<>
+            <section className="panel"><h2>Your rewards, separately</h2><div className="reward-totals">{Object.entries(best.points).map(([currency,points])=><div key={currency}><strong>{number(points)}</strong><span>{currency}</span></div>)}{best.cashBack>0&&<div><strong>{money(best.cashBack)}</strong><span>Cash back</span></div>}{hasBilt&&best.mode==='flexible'&&<div><strong>{money(best.cashLeft)}</strong><span>Bilt Cash balance after plan</span></div>}</div></section>
+            <section className="panel allocation-panel"><div className="section-title"><h2>Where to put your spending</h2><span className="small-badge">{owned.length} cards selected</span></div><p className="muted">Split amounts are spending targets across purchases.</p><div className="allocation-list">{categories.map(c=>{const rows=best.rows.filter(r=>r.category===c.id);return rows.length>0&&<div className="allocation" key={c.id}><div className="allocation-title"><strong>{c.label}</strong><span>{money(spending[c.id])}</span></div>{rows.map(r=><div className="allocation-row" key={r.card.id}><span>{r.card.name}<small>{money(r.amount)} in purchases</small></span><span className="rate-tag">{r.rate}{r.card.kind==='cash'?'%':'×'}</span></div>)}</div>;})}{rent>0&&<div className="allocation"><div className="allocation-title"><strong>Rent</strong><span>{money(rent)}</span></div><div className="allocation-row"><span>{hasBilt?'Pay through Bilt':'Pay outside the card plan'}<small>{hasBilt?`${number(best.housingPoints)} Bilt Points · ${best.mode==='housing'?`${best.housingRate}× housing tier`:`${money(best.cashUsed)} Bilt Cash redeemed`}`:'No housing rewards modeled for this wallet.'}</small></span></div></div>}</div></section>
+            {hasBilt&&<section className="panel"><h2>Compare Bilt options</h2><p className="muted">Each option includes its own best allocation across your wallet.</p><div className="comparison">{calculation.alternatives.map(p=><div className={`comparison-option ${p.mode===best.mode?'winner':''}`} key={p.mode}><div><strong>{modeName(p)}</strong>{p.mode===best.mode&&<span className="small-badge">Recommended</span>}</div><strong className="comparison-value">{money(p.value)}</strong><p>{money(p.biltSpend)} everyday spend on Bilt<br/>{number(p.housingPoints)} rent points{p.mode==='flexible'&&<><br/>{money(p.cashEarned)} Cash earned · {money(p.cashUsed)} used<br/>{money(p.cashLeft)} balance after plan</>}</p></div>)}</div>{cashTiming==='recurring'?<p className="muted">Recurring forecast assumes the previous cycle had the same allocated Bilt spend, so its 4% Cash is available for this rent payment. Current-cycle Cash may arrive too late. Switch to “Next payment” for an existing-balance calculation.</p>:<p className="muted">Only existing Bilt Cash funds rent. New Cash earned is left for later. Estimated value excludes the existing balance and subtracts the opportunity cost of Cash redeemed.</p>}<p className="muted">Mode changes generally apply next billing cycle. Point accelerators, transfer bonuses, annual Cash grants and partner promotions are excluded from this version.</p></section>}
+          </>}
+          <details className="methodology"><summary>How this plan is calculated</summary><p>We compare category earning rates and the Bilt housing thresholds, including spending splits that unlock a better rent tier. We value each points currency independently, using your chosen cents per point.</p><p>Existing-card annual fees are fixed costs and do not change where to spend. Welcome bonuses, annual benefits, interest, payment fees, issuer portals, anniversary bonuses and accelerators are excluded. This is a monthly eligible-spending forecast, not an annual projection. Custom cards must use uncapped rates.</p><p>Groceries and online groceries are separate: do not count an order twice. Merchant coding and reward rounding may change actual earnings. Rent assumes an eligible payment through Bilt.</p><p>Nothing is sent to a server. Your inputs stay in memory unless you choose to save them on this device.</p></details>
+        </div>
+      </div>
+      <footer><span>cardwise · Make more of what you already have.</span><span>US cards · USD · Rules checked October 4, 2026</span></footer>
+    </main>
+  </>;
+}
